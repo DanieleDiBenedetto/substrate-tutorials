@@ -61,8 +61,8 @@ impl pallet_flipper::Config for TestRuntime {
 
 // Build genesis storage according to the mock runtime.
 pub fn new_test_ext() -> sp_io::TestExternalities {
-	let runtime: Storage = <GenesisConfig<TestRuntime> as BuildStorage>::build_storage(&GenesisConfig::default()).unwrap();
-	runtime.into()
+	let storage: Storage = <GenesisConfig<TestRuntime> as BuildStorage>::build_storage(&GenesisConfig::default()).unwrap();
+	storage.into()
 }
 
 pub const ALICE: u64 = 0;

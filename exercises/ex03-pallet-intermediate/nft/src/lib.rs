@@ -12,6 +12,7 @@ pub mod types;
 use frame_support::ensure;
 use types::*;
 
+#[allow(unexpected_cfgs)] // skip warning "unexpected `cfg` condition value: `try-runtime`"
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
@@ -97,16 +98,54 @@ pub mod pallet {
 			metadata: BoundedVec<u8, T::MaxLength>,
 			supply: u128,
 		) -> DispatchResult {
+			let origin = ensure_signed(origin)?;
+
+			if supply == 0 {
+				return Err(Error::<T>::NoSupply.into());
+			}
+
+			let id = Self::nonce();
+			let details = UniqueAssetDetails::new(origin.clone(), metadata, supply);
+
+			UniqueAsset::<T>::insert(id, details);
+			Nonce::<T>::set(id.saturating_add(1));
+
+			Account::<T>::insert(id, origin.clone(), supply);
+
+			Self::deposit_event(Event::<T>::Created {
+				creator: origin,
+				asset_id: id,
+			});
+
 			Ok(())
 		}
 
 		#[pallet::call_index(1)]
 		#[pallet::weight({0})]
-		pub fn burn(
-			origin: OriginFor<T>, 
-			asset_id: UniqueAssetId, 
-			amount: u128,
-		) -> DispatchResult {
+		pub fn burn(origin: OriginFor<T>, asset_id: UniqueAssetId, amount: u128) -> DispatchResult {
+			let origin = ensure_signed(origin)?;
+			let details = Self::unique_asset(asset_id).ok_or(Error::<T>::UnknownAssetId)?;
+			ensure!(details.creator() == origin, Error::<T>::NotOwned);
+
+			let balance = Account::<T>::get(asset_id, origin.clone());
+			let amount = amount.min(balance);
+
+			let total_supply = details.supply.saturating_sub(amount);
+			UniqueAsset::<T>::mutate(asset_id, |details| {
+				let details = details.as_mut().unwrap();
+				details.supply = total_supply;
+			});
+
+			Account::<T>::mutate(asset_id, origin.clone(), |balance| {
+				*balance = balance.saturating_sub(amount);
+			});
+
+			Self::deposit_event(Event::<T>::Burned {
+				asset_id,
+				owner: origin,
+				total_supply,
+			});
+
 			Ok(())
 		}
 
@@ -118,6 +157,35 @@ pub mod pallet {
 			amount: u128,
 			to: T::AccountId,
 		) -> DispatchResult {
+			let origin = ensure_signed(origin)?;
+
+			let exists = UniqueAsset::<T>::contains_key(asset_id);
+			if !exists {
+				return Err(Error::<T>::UnknownAssetId.into());
+			}
+
+			let balance = Account::<T>::get(asset_id, origin.clone());
+			if balance == 0 {
+				return Err(Error::<T>::NotOwned.into());
+			}
+
+			let amount = amount.min(balance);
+
+			Account::<T>::mutate(asset_id, origin.clone(), |balance| {
+				*balance = balance.saturating_sub(amount);
+			});
+
+			Account::<T>::mutate(asset_id, to.clone(), |balance| {
+				*balance = balance.saturating_add(amount);
+			});
+
+			Self::deposit_event(Event::<T>::Transferred {
+				asset_id,
+				from: origin,
+				to,
+				amount,
+			});
+
 			Ok(())
 		}
 	}
